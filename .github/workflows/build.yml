@@ -1,0 +1,58 @@
+name: Build SoundMod
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*.*.*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Restore NuGet packages (WebView2 SDK + WIL)
+        run: nuget restore packages.config -PackagesDirectory packages
+
+      - name: Configure CMake
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build (Release)
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage output
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item build\Release\SoundMod.exe dist\
+          Copy-Item packages\Microsoft.Web.WebView2\build\native\x64\WebView2Loader.dll dist\
+          New-Item -ItemType Directory -Force -Path dist\soundpacks\default
+        shell: pwsh
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundMod-windows-x64
+          path: dist/**
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/SoundMod.exe
+            dist/WebView2Loader.dll
+          generate_release_notes: true
