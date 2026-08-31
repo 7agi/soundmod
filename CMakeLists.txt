@@ -26,8 +26,17 @@ target_include_directories(SoundMod PRIVATE
     ${CMAKE_SOURCE_DIR}/packages/Microsoft.Windows.ImplementationLibrary/include
 )
 
+set(WEBVIEW2_LIB ${CMAKE_SOURCE_DIR}/packages/Microsoft.Web.WebView2/build/native/x64/WebView2LoaderStatic.lib)
+if (NOT EXISTS ${WEBVIEW2_LIB})
+    message(FATAL_ERROR
+        "WebView2 static lib not found at ${WEBVIEW2_LIB}.\n"
+        "Run: nuget restore packages.config -PackagesDirectory packages -ExcludeVersion\n"
+        "(the -ExcludeVersion flag is required so the folder is named "
+        "'Microsoft.Web.WebView2' instead of a versioned folder name).")
+endif()
+
 target_link_libraries(SoundMod PRIVATE
-    ${CMAKE_SOURCE_DIR}/packages/Microsoft.Web.WebView2/build/native/x64/WebView2LoaderStatic.lib
+    ${WEBVIEW2_LIB}
     shlwapi
 )
 
