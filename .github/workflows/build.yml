@@ -25,10 +25,11 @@ jobs:
         uses: NuGet/setup-nuget@v2
 
       - name: Restore NuGet packages (WebView2 SDK + WIL)
-        # -ExcludeVersion keeps folder names as "packages/Microsoft.Web.WebView2/..."
-        # instead of versioned "packages/Microsoft.Web.WebView2.1.0.2592.51/...",
-        # matching the fixed paths referenced in CMakeLists.txt and below.
-        run: nuget restore packages.config -PackagesDirectory packages -ExcludeVersion
+        # `nuget restore` (packages.config + msbuild project restore) doesn't
+        # support -ExcludeVersion. `nuget install` does, and is the right verb
+        # here since we're not restoring an msbuild project - just fetching
+        # the packages onto disk with folder names CMakeLists.txt expects.
+        run: nuget install packages.config -OutputDirectory packages -ExcludeVersion
 
       - name: Configure CMake
         # Ninja + the cl.exe put on PATH by msvc-dev-cmd, instead of pinning a
