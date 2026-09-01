@@ -29,6 +29,7 @@ public:
 
 private:
     void HookDownloadEvents();
+    void HookNavigationDiagnostics();
 
     HWND m_parent = nullptr;
     wil::com_ptr<ICoreWebView2Controller> m_controller;

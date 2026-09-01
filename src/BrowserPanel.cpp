@@ -56,6 +56,7 @@ bool BrowserPanel::Initialize(HWND parentWindow, const std::wstring& startUrl) {
                             m_controller->put_IsVisible(TRUE);
 
                             HookDownloadEvents();
+                            HookNavigationDiagnostics();
                             m_webview->Navigate(m_homeUrl.c_str());
                             return S_OK;
                         }).Get());
@@ -69,6 +70,31 @@ bool BrowserPanel::Initialize(HWND parentWindow, const std::wstring& startUrl) {
     }
 
     return SUCCEEDED(hr);
+}
+
+void BrowserPanel::HookNavigationDiagnostics() {
+    if (!m_webview) return;
+
+    EventRegistrationToken token;
+    m_webview->add_NavigationCompleted(
+        Callback<ICoreWebView2NavigationCompletedEventHandler>(
+            [this](ICoreWebView2* sender, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+                BOOL success = FALSE;
+                args->get_IsSuccess(&success);
+                if (!success) {
+                    COREWEBVIEW2_WEB_ERROR_STATUS status;
+                    args->get_WebErrorStatus(&status);
+                    wchar_t msg[256];
+                    swprintf_s(msg,
+                        L"Navigation to the soundpack site failed (WebErrorStatus=%d).\n"
+                        L"Common causes: no internet access from this process, DNS/cert "
+                        L"issue, or the URL is blocked by a firewall/proxy.",
+                        (int)status);
+                    MessageBoxW(m_parent, msg, L"Sound Mod - Navigation failed", MB_ICONWARNING);
+                }
+                return S_OK;
+            }).Get(),
+        &token);
 }
 
 void BrowserPanel::HookDownloadEvents() {
