@@ -2,6 +2,7 @@
 #include <combaseapi.h>
 #include <filesystem>
 #include <random>
+#include <memory>
 #include "AudioEngine.h"
 #include "InputHook.h"
 #include "BrowserPanel.h"
@@ -9,15 +10,26 @@
 
 namespace fs = std::filesystem;
 
-static AudioEngine g_audio;
+// These must NOT be plain file-scope globals: their constructors would run
+// during C++ static initialization, before wWinMain gets a chance to call
+// CoInitializeEx(COINIT_APARTMENTTHREADED). In particular, AudioEngine's
+// constructor calls miniaudio's ma_context_init, and miniaudio's WASAPI
+// backend calls CoInitializeEx(COINIT_MULTITHREADED) internally on first use
+// - which locks the thread's COM apartment mode before our own call runs,
+// causing WebView2's environment creation to fail with RPC_E_CHANGED_MODE
+// (0x80010106). Constructing them explicitly, after CoInitializeEx, avoids
+// the race entirely regardless of C++ static-init order.
+static std::unique_ptr<AudioEngine> g_audio;
 static AppConfig g_config;
-static BrowserPanel g_browser;
+static std::unique_ptr<BrowserPanel> g_browser;
 static std::mt19937 g_rng{std::random_device{}()};
 
 // Looks for "<vkCode>_down.wav" / "<vkCode>_up.wav" style files in the active
 // soundpack folder. Swap this for a real bindings map (Config::bindings) once
 // you have a UI for assigning specific sounds per key.
 static void OnKeyEvent(int vkCode, bool isDown) {
+    if (!g_audio) return;
+
     std::string suffix = isDown ? "_down.wav" : "_up.wav";
     std::string candidate = g_config.activeSoundpackDir + "/" + std::to_string(vkCode) + suffix;
 
@@ -39,23 +51,24 @@ static void OnKeyEvent(int vkCode, bool isDown) {
         pitch += dist(g_rng);
     }
 
-    g_audio.TriggerSound(candidate, volume, pitch);
+    g_audio->TriggerSound(candidate, volume, pitch);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_SIZE: {
+            if (!g_browser) return 0; // WM_SIZE can fire during CreateWindowExW, before g_browser exists
             RECT rc;
             GetClientRect(hwnd, &rc);
             // Browser panel occupies the whole window in this minimal shell;
             // carve out a control strip at the top for device/soundpack pickers
             // once you add real UI (Win32 controls, Dear ImGui overlay, etc).
-            g_browser.Resize(rc.right - rc.left, rc.bottom - rc.top);
+            g_browser->Resize(rc.right - rc.left, rc.bottom - rc.top);
             return 0;
         }
         case WM_DESTROY:
             InputHook::Instance().Uninstall();
-            g_audio.Stop();
+            if (g_audio) g_audio->Stop();
             PostQuitMessage(0);
             return 0;
     }
@@ -63,9 +76,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
-    // WebView2 requires COM to be initialized on an STA thread. Skipping this
-    // is the #1 cause of a silent blank/white window: environment creation
-    // just fails quietly instead of throwing a visible error.
+    // WebView2 (and miniaudio's WASAPI backend) both need COM initialized on
+    // this thread, and WebView2 specifically requires apartment-threaded mode.
+    // This MUST be the first thing that could possibly touch COM - see the
+    // comment above g_audio/g_browser for why they're constructed below,
+    // not as plain globals.
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     g_config = AppConfig::LoadDefault();
@@ -82,22 +97,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                                  WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                                  1280, 800, nullptr, nullptr, hInstance, nullptr);
 
+    g_audio = std::make_unique<AudioEngine>();
+    g_browser = std::make_unique<BrowserPanel>();
+
     // 1) Start audio routing: mic -> virtual cable, with click/release sounds mixed in.
-    g_audio.Start(g_config.micDeviceName, g_config.outputDeviceName,
-                  g_config.micGain, /*masterVolume=*/1.0f);
-    g_audio.SetPassthroughEnabled(g_config.passthroughMic);
+    g_audio->Start(g_config.micDeviceName, g_config.outputDeviceName,
+                   g_config.micGain, /*masterVolume=*/1.0f);
+    g_audio->SetPassthroughEnabled(g_config.passthroughMic);
 
     // 2) Install the global key/mouse hook that triggers sounds.
     InputHook::Instance().Install(OnKeyEvent);
 
     // 3) Bring up the embedded browser to db.ruikasa.lol for
     //    browsing/searching/previewing/downloading soundpacks in-app.
-    g_browser.SetDownloadFolder(L"soundpacks");
-    g_browser.SetDownloadCompleteCallback([](const std::wstring& path) {
+    g_browser->SetDownloadFolder(L"soundpacks");
+    g_browser->SetDownloadCompleteCallback([](const std::wstring& path) {
         // A new soundpack file just finished downloading into soundpacks/.
         // Hook this up to auto-extract/refresh the soundpack list in the UI.
     });
-    g_browser.Initialize(hwnd);
+    g_browser->Initialize(hwnd);
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
@@ -109,6 +127,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 
     g_config.SaveToFile("config.ini");
+    g_browser.reset();
+    g_audio.reset();
     CoUninitialize();
     return 0;
 }
