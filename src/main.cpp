@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <combaseapi.h>
 #include <filesystem>
 #include <random>
 #include "AudioEngine.h"
@@ -62,6 +63,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+    // WebView2 requires COM to be initialized on an STA thread. Skipping this
+    // is the #1 cause of a silent blank/white window: environment creation
+    // just fails quietly instead of throwing a visible error.
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
     g_config = AppConfig::LoadDefault();
     g_config.LoadFromFile("config.ini"); // ignored if it doesn't exist yet
     fs::create_directories(g_config.activeSoundpackDir);
@@ -103,5 +109,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 
     g_config.SaveToFile("config.ini");
+    CoUninitialize();
     return 0;
 }
