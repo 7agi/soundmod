@@ -63,6 +63,10 @@ void BrowserPanel::HookDownloadEvents() {
                     args->put_ResultFilePath(targetPath.c_str());
                     args->put_Handled(TRUE);
 
+                    // Own token per download operation (can't reuse the outer
+                    // add_DownloadStarting token; also more correct, since each
+                    // in-flight download needs its own registration).
+                    EventRegistrationToken stateChangedToken;
                     download->add_StateChanged(
                         Callback<ICoreWebView2StateChangedEventHandler>(
                             [this, targetPath](ICoreWebView2DownloadOperation* op, IUnknown*) -> HRESULT {
@@ -73,7 +77,7 @@ void BrowserPanel::HookDownloadEvents() {
                                 }
                                 return S_OK;
                             }).Get(),
-                        &token);
+                        &stateChangedToken);
 
                     return S_OK;
                 }).Get(),
